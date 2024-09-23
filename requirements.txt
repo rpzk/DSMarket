@@ -2,3 +2,8 @@ pandas
 numpy
 dask
 dask[dataframe]
+google-auth
+google-cloud-bigquery
+pandas_gbq
+matplotlib
+seaborn
