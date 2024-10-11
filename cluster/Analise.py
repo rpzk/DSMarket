@@ -8,6 +8,11 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 import db_dtypes
+import matplotlib.pyplot as plt
+import dtale
+
+
+
 
 def get_data():
     # Caminho para o arquivo de chave da conta de serviço - Lucas disponibilizou no Whatsapp do grupo
@@ -226,13 +231,18 @@ def vendas_por_loja(df):
     cluster_stats = vendas_por_loja_cluster.groupby('cluster')['sales'].describe().reset_index()
 
     # Exibir as estatísticas detalhadas para cada cluster
-    print(cluster_stats)
+    d = dtale.show(cluster_stats)
+    d.open_browser()
+
     # Filtrar as lojas que pertencem ao cluster 1
     lojas_cluster_1 = vendas_por_loja_cluster[vendas_por_loja_cluster['cluster'] == 1]
     lojas_cluster_0 = vendas_por_loja_cluster[vendas_por_loja_cluster['cluster'] == 0]
     # Exibir as lojas que estão no cluster 1
-    Print(lojas_cluster_1)
-    print(lojas_cluster_0)
+    d = dtale.show(lojas_cluster_1)
+    d.open_browser()
+
+    d = dtale.show(lojas_cluster_0)
+    d.open_browser()
 
     # Calcular a média de vendas por cluster
     media_vendas_por_cluster = vendas_por_loja_cluster.groupby('cluster')['sales'].mean().reset_index()
@@ -241,7 +251,8 @@ def vendas_por_loja(df):
     media_vendas_por_cluster.columns = ['cluster', 'media_vendas']
 
     # Exibir a média de vendas por cluster
-    print(media_vendas_por_cluster)
+    d = dtale.show(media_vendas_por_cluster)
+    d.open_browser()
 
 
     fig_distribuicao_vendas = px.histogram(vendas_por_loja_cluster, x='sales', nbins=20,
@@ -288,7 +299,7 @@ def cluster_reg_periodo(df):
     df['year'] = df['date'].dt.year
 
     # Agrupar as vendas por região e mês
-    vendas_por_regiao_mes = df_tratado.groupby(['region', 'year', 'month'])['sales'].sum().reset_index()
+    vendas_por_regiao_mes = df.groupby(['region', 'year', 'month'])['sales'].sum().reset_index()
 
     # Pivotar os dados para ter uma matriz onde cada linha é uma região e cada coluna é um período (mês)
     vendas_pivot_regiao_mes = vendas_por_regiao_mes.pivot_table(index='region', columns=['year', 'month'], values='sales').fillna(0)
@@ -304,8 +315,23 @@ def cluster_reg_periodo(df):
     # Exibir as estatísticas detalhadas para cada cluster
     cluster_stats_regiao_mes = vendas_pivot_regiao_mes.groupby('cluster').describe()
 
-    print(cluster_stats_regiao_mes)
+    d = dtale.show(cluster_stats_regiao_mes)
+    d.open_browser()
+    # Visualizar os resultados usando matplotlib
+    plt.figure(figsize=(10, 6))
+    colors = ['red', 'green', 'blue']
 
+    for cluster in range(3):
+        cluster_data = vendas_pivot_regiao_mes[vendas_pivot_regiao_mes['cluster'] == cluster]
+        plt.scatter(cluster_data.iloc[:, 0], cluster_data.iloc[:, 1], 
+                    color=colors[cluster], label=f'Cluster {cluster}')
+
+    plt.title('Clusterização por Região e Período (Sazonalidade)')
+    plt.xlabel('Vendas no Primeiro Mês de 2012')
+    plt.ylabel('Vendas no Segundo Mês de 2012')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 def produto_preco(df):
     #3. **Clusterização por Produto e Preço**:
     # Agrupar as vendas e calcular o preço médio por produto
@@ -331,7 +357,23 @@ def produto_preco(df):
 
     # Exibir as estatísticas detalhadas para cada cluster
     cluster_stats_produto_preco = vendas_preco_produto.groupby('cluster').describe()
-    print(cluster_stats_produto_preco)
+    d = dtale.show(cluster_stats_produto_preco)
+    d.open_browser()
+    
+
+    plt.figure(figsize=(10, 6))
+
+    for cluster in range(3):
+        cluster_data = vendas_preco_produto[vendas_preco_produto['cluster'] == cluster]
+        plt.scatter(cluster_data['average_price'], cluster_data['total_sales'], 
+                    color=colors[cluster], label=f'Cluster {cluster}')
+
+    plt.title('Clusterização por Produto e Preço')
+    plt.xlabel('Preço Médio')
+    plt.ylabel('Total de Vendas')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
 def main():
     df = get_data()
