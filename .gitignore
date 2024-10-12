@@ -161,11 +161,7 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-
 # Big Data
 *.csv
 *.parquet
-eda/tfm-sa.json
-
-forecasting/tfm-sa.json
-forecasting/tfm-sa.json
+tfm-sa.json
