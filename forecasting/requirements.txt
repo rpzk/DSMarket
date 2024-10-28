@@ -1,0 +1,9 @@
+pandas
+numpy
+pmdarima
+statsmodels
+google-cloud-bigquery
+matplotlib
+scikit-learn
+prophet
+joblib
