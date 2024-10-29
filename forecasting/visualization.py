@@ -2,23 +2,18 @@
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
+import logging
 
 def plot_forecast(data: pd.DataFrame, save_path: str = None):
-    """
-    Gera e salva um gráfico de previsão com vendas reais e previstas.
-
-    Args:
-        data (pd.DataFrame): DataFrame contendo 'date', 'forecast_sales', e opcionalmente 'actual_sales', 'store', 'item'.
-        save_path (str, optional): Caminho para salvar o gráfico. Se None, o gráfico não é salvo.
-    """
     if data.empty:
         logging.warning("Nenhum dado disponível para exibir.")
         return
-    
+
     # Verificar se 'date' está no formato datetime
     if not np.issubdtype(data['date'].dtype, np.datetime64):
         data['date'] = pd.to_datetime(data['date'])
-    
+
     plt.figure(figsize=(14, 7))
 
     # Plota vendas reais, se disponíveis
@@ -46,4 +41,4 @@ def plot_forecast(data: pd.DataFrame, save_path: str = None):
     else:
         plt.show()
 
-    plt.close()  # Fechar o gráfico para liberar memória
+    plt.close()
