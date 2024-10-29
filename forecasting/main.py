@@ -144,18 +144,28 @@ def get_top_items(store_data: pd.DataFrame, top_n: int) -> pd.Series:
 
 def fit_and_forecast_prophet(train_data, steps):
     params = {
-        "changepoint_prior_scale": 0.1,
+        "changepoint_prior_scale": 0.2,  # Ajuste para 0.05, 0.2, etc.
         "daily_seasonality": True,
         "weekly_seasonality": True,
-        "yearly_seasonality": True
+        "yearly_seasonality": True,
+        "seasonality_mode": 'multiplicative',  # Adicionado
+        "custom_seasonalities": [
+            {'name': 'monthly', 'period': 30.5, 'fourier_order': 5}
+        ]
     }
     try:
         prophet = Prophet(
             changepoint_prior_scale=params["changepoint_prior_scale"],
             daily_seasonality=params["daily_seasonality"],
             weekly_seasonality=params["weekly_seasonality"],
-            yearly_seasonality=params["yearly_seasonality"]
+            yearly_seasonality=params["yearly_seasonality"],
+            seasonality_mode=params.get("seasonality_mode", 'additive')
         )
+        # Adicionar sazonalidades customizadas
+        if "custom_seasonalities" in params:
+            for season in params["custom_seasonalities"]:
+                prophet.add_seasonality(name=season['name'], period=season['period'], fourier_order=season['fourier_order'])
+        
         train_df = train_data.reset_index().rename(columns={'date': 'ds', 'sales': 'y'})
         prophet.fit(train_df)
         future = prophet.make_future_dataframe(periods=steps)
@@ -166,6 +176,7 @@ def fit_and_forecast_prophet(train_data, steps):
     except Exception as e:
         logging.error(f"Erro ao usar Prophet: {e}")
         return None, None, None, None
+
 
 def fit_and_forecast_sarima(train_data, steps):
     params = {
