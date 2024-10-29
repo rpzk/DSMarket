@@ -1,3 +1,5 @@
+# forecasting/main.py
+
 import pandas as pd
 import numpy as np
 import logging
@@ -36,7 +38,7 @@ if not os.path.exists(metrics_file_path):
 # Função para salvar as métricas e os parâmetros do modelo
 def save_metrics(store, item, model_type, rmse, mae, mape, params):
     with open(metrics_file_path, 'a') as f:
-        f.write(f"{store},{item},{model_type},{rmse},{mae},{mape},{params['changepoint_prior_scale']},{params['daily_seasonality']},{params['weekly_seasonality']},{params['yearly_seasonality']}\n")
+        f.write(f"{store},{item},{model_type},{rmse},{mae},{mape},{params.get('changepoint_prior_scale','')},{params.get('daily_seasonality','')},{params.get('weekly_seasonality','')},{params.get('yearly_seasonality','')}\n")
 
 # Função para preparar os dados de vendas
 def prepare_sales_data(raw_data: pd.DataFrame, apply_log=False, aggregate_weekly=False) -> pd.DataFrame:
@@ -83,6 +85,96 @@ forecast_table_id = 'ds_market_forecast'
 full_data_table_id = f'{project_id}.{dataset_id}.{data_table_id}'
 forecast_table_full_id = f'{project_id}.{dataset_id}.{forecast_table_id}'
 
+def get_top_items(store_data, top_n):
+    total_sales_per_item = store_data.groupby('item')['sales'].sum().reset_index()
+    top_items = total_sales_per_item.sort_values(by='sales', ascending=False).head(top_n)['item']
+    return top_items
+
+def fit_and_forecast_prophet(train_data, steps):
+    params = {
+        "changepoint_prior_scale": 0.1,
+        "daily_seasonality": True,
+        "weekly_seasonality": True,
+        "yearly_seasonality": True
+    }
+    try:
+        prophet = Prophet(
+            changepoint_prior_scale=params["changepoint_prior_scale"],
+            daily_seasonality=params["daily_seasonality"],
+            weekly_seasonality=params["weekly_seasonality"],
+            yearly_seasonality=params["yearly_seasonality"]
+        )
+        train_df = train_data.reset_index().rename(columns={'date': 'ds', 'sales': 'y'})
+        prophet.fit(train_df)
+        future = prophet.make_future_dataframe(periods=steps)
+        forecast = prophet.predict(future)
+        forecast_values = forecast['yhat'][-steps:].values
+        model_type = "Prophet"
+        return forecast_values, model_type, params
+    except Exception as e:
+        logging.error(f"Erro ao usar Prophet: {e}")
+        return None, None, None
+
+def fit_and_forecast_sarima(train_data, steps):
+    params = {
+        "order": (1, 1, 1),
+        "seasonal_order": (1, 1, 1, 7)
+    }
+    try:
+        sarima = SARIMAX(train_data['sales'], order=params["order"], seasonal_order=params["seasonal_order"])
+        sarima_fit = sarima.fit(disp=False)
+        forecast_values = sarima_fit.forecast(steps=steps)
+        model_type = "SARIMA"
+        return forecast_values, model_type, params
+    except Exception as e:
+        logging.error(f"Erro ao usar SARIMA: {e}")
+        return None, None, None
+
+def process_store_item_forecast(store, item, store_data, test_period_days):
+    logging.info(f"Processando item {item} na loja {store}...")
+    item_data = store_data[store_data['item'] == item]
+    prepared_data = prepare_sales_data(item_data, apply_log=False, aggregate_weekly=False)
+
+    # Filtrar itens com alta proporção de vendas zero
+    if not filter_zero_sales(prepared_data, threshold=0.9):
+        logging.warning(f"Item {item} na loja {store} possui alta proporção de vendas zero. Pulando...")
+        return
+
+    # Remover outliers
+    prepared_data = detect_and_remove_outliers(prepared_data)
+    prepared_data = prepared_data.asfreq('D').fillna(0)
+    cutoff_date = prepared_data.index.max() - pd.Timedelta(days=test_period_days)
+    train_data = prepared_data[prepared_data.index <= cutoff_date]
+    test_data = prepared_data[prepared_data.index > cutoff_date]
+    steps = len(test_data)
+
+    # Tentar ajustar e prever com Prophet
+    forecast_values, model_type, params = fit_and_forecast_prophet(train_data, steps)
+
+    if forecast_values is None:
+        # Se Prophet falhar, tentar com SARIMA
+        forecast_values, model_type, params = fit_and_forecast_sarima(train_data, steps)
+        if forecast_values is None:
+            logging.error(f"Ambos os modelos falharam para o item {item} na loja {store}.")
+            return
+
+    # Calcular métricas de erro
+    actual_values = test_data['sales'].values
+    rmse, mae, mape = calculate_metrics(actual_values, forecast_values)
+    save_metrics(store, item, model_type, rmse, mae, mape, params)
+
+    # Salvar gráfico de previsão
+    forecast_df = pd.DataFrame({
+        'date': test_data.index,
+        'forecast_sales': forecast_values,
+        'actual_sales': actual_values,
+        'store': store,
+        'item': item
+    })
+    plot_path = f"metrics/forecast_{store}_{item}.png"
+    plot_forecast(forecast_df, save_path=plot_path)
+    logging.info(f"Gráfico salvo em {plot_path}")
+
 # Pipeline completo para previsão de estoque
 def run_forecast_pipeline_for_top_items_per_store(query: str, forecast_table_full_id: str, test_period_days=30, top_n=3):
     client = initialize_bigquery_client(project_id, service_account_path)
@@ -93,77 +185,10 @@ def run_forecast_pipeline_for_top_items_per_store(query: str, forecast_table_ful
     for store in stores:
         logging.info(f"\nProcessando loja {store}...")
         store_data = raw_data[raw_data['store'] == store]
-        total_sales_per_item = store_data.groupby('item')['sales'].sum().reset_index()
-        top_items = total_sales_per_item.sort_values(by='sales', ascending=False).head(top_n)['item']
+        top_items = get_top_items(store_data, top_n)
 
         for item in top_items:
-            logging.info(f"Processando item {item} na loja {store}...")
-            item_data = store_data[store_data['item'] == item]
-            prepared_data = prepare_sales_data(item_data, apply_log=False, aggregate_weekly=False)
-
-            # Filtrar itens com alta proporção de vendas zero
-            if not filter_zero_sales(prepared_data, threshold=0.9):
-                logging.warning(f"Item {item} na loja {store} possui alta proporção de vendas zero. Pulando...")
-                continue
-
-            # Remover outliers
-            prepared_data = detect_and_remove_outliers(prepared_data)
-            prepared_data = prepared_data.asfreq('D').fillna(0)
-            cutoff_date = prepared_data.index.max() - pd.Timedelta(days=test_period_days)
-            train_data = prepared_data[prepared_data.index <= cutoff_date]
-            test_data = prepared_data[prepared_data.index > cutoff_date]
-            steps = len(test_data)
-
-            # Ajuste do modelo Prophet com múltiplos valores de changepoint_prior_scale
-            params = {
-                "changepoint_prior_scale": 0.1,
-                "daily_seasonality": True,
-                "weekly_seasonality": True,
-                "yearly_seasonality": True
-            }
-            try:
-                prophet = Prophet(
-                    changepoint_prior_scale=params["changepoint_prior_scale"],
-                    daily_seasonality=params["daily_seasonality"],
-                    weekly_seasonality=params["weekly_seasonality"],
-                    yearly_seasonality=params["yearly_seasonality"]
-                )
-                train_df = train_data.reset_index().rename(columns={'date': 'ds', 'sales': 'y'})
-                prophet.fit(train_df)
-                future = prophet.make_future_dataframe(periods=steps)
-                forecast = prophet.predict(future)
-                forecast_values = forecast['yhat'][-steps:].values
-                model_type = "Prophet"
-            except Exception as e:
-                logging.error(f"Erro ao usar Prophet para {item} na loja {store}: {e}")
-                continue
-
-            # Alternativa com SARIMA se Prophet falhar
-            try:
-                sarima = SARIMAX(train_data['sales'], order=(1, 1, 1), seasonal_order=(1, 1, 1, 7))
-                sarima_fit = sarima.fit(disp=False)
-                forecast_values = sarima_fit.forecast(steps=steps)
-                model_type = "SARIMA"
-            except Exception as e:
-                logging.error(f"Erro ao usar SARIMA para {item} na loja {store}: {e}")
-                continue
-
-            # Calcular métricas de erro
-            actual_values = test_data['sales'].values
-            rmse, mae, mape = calculate_metrics(actual_values, forecast_values)
-            save_metrics(store, item, model_type, rmse, mae, mape, params)
-
-            # Salvar gráfico de previsão
-            forecast_df = pd.DataFrame({
-                'date': test_data.index,
-                'forecast_sales': forecast_values,
-                'actual_sales': actual_values,
-                'store': store,
-                'item': item
-            })
-            plot_path = f"metrics/forecast_{store}_{item}.png"
-            plot_forecast(forecast_df, save_path=plot_path)
-            logging.info(f"Gráfico salvo em {plot_path}")
+            process_store_item_forecast(store, item, store_data, test_period_days)
 
 # Função principal
 def run_pipeline():
