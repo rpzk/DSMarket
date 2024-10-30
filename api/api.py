@@ -32,7 +32,7 @@ app.add_middleware(
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Construir o caminho absoluto para o diretório 'models'
-models_dir = os.path.join(current_dir, 'models')
+models_dir = os.path.join(current_dir, 'forecasting/models')
 models_path = os.path.join(models_dir, 'trained_models.pkl')
 
 # Carregar os modelos treinados
