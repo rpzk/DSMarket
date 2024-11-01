@@ -162,6 +162,10 @@ cython_debug/
 #.idea/
 
 # Big Data
-*.csv
 *.parquet
+
 tfm-sa.json
+item_sales.csv
+item_prices.csv
+ds_market.csv
+daily_calendar_with_events.csv

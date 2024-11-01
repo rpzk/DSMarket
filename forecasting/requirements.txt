@@ -6,4 +6,5 @@ google-cloud-bigquery
 matplotlib
 scikit-learn
 prophet
+optune
 joblib
