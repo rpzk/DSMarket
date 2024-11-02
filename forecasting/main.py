@@ -4,7 +4,7 @@ import logging
 import os
 from data_extraction import initialize_bigquery_client, get_historical_data_from_bigquery
 from feature_engineering import prepare_sales_data, filter_zero_sales, detect_and_remove_outliers
-from model_training import fit_and_forecast_prophet_optimized, fit_and_forecast_sarima_optimized
+from model_training import fit_and_forecast_prophet_optimized, fit_and_forecast_sarima_optimized, fit_and_forecast_xgboost
 from model_evaluation import calculate_metrics
 from model_storage import save_trained_model, save_forecast_results
 from utils.metrics_storage import save_metrics
@@ -51,49 +51,63 @@ def process_store_item_forecast(store, item, store_data, test_period_days):
     test_data = prepared_data[prepared_data.index > cutoff_date]
     steps = len(test_data)
 
-    # Preparar dados para Prophet
+    # Preparar dados para Prophet e XGBoost
     regressors = ['is_christmas', 'is_holiday', 'day_of_week', 'is_weekend']
     train_df = train_data.reset_index().rename(columns={'date': 'ds', 'sales': 'y'})
     test_df = test_data.reset_index().rename(columns={'date': 'ds', 'sales': 'y'})
 
-    # Garantir que os regressores estão nos DataFrames
     for reg in regressors:
         if reg not in train_df.columns:
             train_df[reg] = train_data[reg].values
         if reg not in test_df.columns:
             test_df[reg] = test_data[reg].values
 
+    # Lista para armazenar previsões e métricas
+    forecast_results = []
+
     # Otimizar e ajustar Prophet
-    forecast_values, model_type, params, trained_model = fit_and_forecast_prophet_optimized(
-        train_df, test_df, steps, regressors, n_trials=50)
+    forecast_prophet, model_type, prophet_params, prophet_model = fit_and_forecast_prophet_optimized(
+        train_df, test_df, steps, regressors, n_trials=50
+    )
+    if forecast_prophet is not None:
+        save_trained_model(prophet_model, model_type, store, item, models_dir=MODELS_DIR)
+        metrics_prophet = calculate_metrics(test_df['y'], forecast_prophet, model_type)
+        forecast_results.append((forecast_prophet, model_type, metrics_prophet, prophet_params))
 
-    if forecast_values is None:
-        # Se Prophet falhar, tentar com SARIMA otimizado
-        forecast_values, model_type, params, trained_model = fit_and_forecast_sarima_optimized(
-            train_data, test_data, steps)
-        if forecast_values is None:
-            logging.error(f"Ambos os modelos falharam para o item {item} na loja {store}.")
-            return None
+    # Ajustar SARIMA
+    forecast_sarima, model_type, sarima_params, sarima_model = fit_and_forecast_sarima_optimized(
+        train_data, test_data, steps
+    )
+    if forecast_sarima is not None:
+        save_trained_model(sarima_model, model_type, store, item, models_dir=MODELS_DIR)
+        metrics_sarima = calculate_metrics(test_df['y'], forecast_sarima, model_type)
+        forecast_results.append((forecast_sarima, model_type, metrics_sarima, sarima_params))
 
-    # Calcular métricas de erro
-    actual_values = test_df['y'].values
-    rmse, mae, mape = calculate_metrics(actual_values, forecast_values)
-    save_metrics(store, item, model_type, rmse, mae, mape, params, metrics_file_path=METRICS_FILE_PATH)
+    # Ajustar XGBoost
+    forecast_xgboost, model_type, xgboost_params, xgboost_model = fit_and_forecast_xgboost(
+        train_df, test_df, steps, regressors
+    )
+    if forecast_xgboost is not None:
+        save_trained_model(xgboost_model, model_type, store, item, models_dir=MODELS_DIR)
+        metrics_xgboost = calculate_metrics(test_df['y'], forecast_xgboost, model_type)
+        forecast_results.append((forecast_xgboost, model_type, metrics_xgboost, xgboost_params))
 
-    # Salvar gráfico de previsão
+    # Selecionar o melhor modelo baseado no MAPE
+    best_forecast, best_model_type, best_metrics, best_params = min(forecast_results, key=lambda x: x[2]['mape'])
+    save_metrics(store, item, best_model_type, best_metrics['rmse'], best_metrics['mae'], best_metrics['mape'], 
+                 params=best_params, metrics_file_path=METRICS_FILE_PATH)
+
+    # Salvar o gráfico de previsão do melhor modelo
     forecast_df = pd.DataFrame({
         'date': test_df['ds'],
-        'forecast_sales': forecast_values,
-        'actual_sales': actual_values,
+        'forecast_sales': best_forecast,
+        'actual_sales': test_df['y'].values,
         'store': store,
         'item': item
     })
-    plot_path = os.path.join(BASE_DIR, 'metrics', f"forecast_{store}_{item}.png")
+    plot_path = os.path.join(BASE_DIR, 'metrics', f"forecast_{store}_{item}_{best_model_type}.png")
     plot_forecast(forecast_df, save_path=plot_path)
     logging.info(f"Gráfico salvo em {plot_path}")
-
-    # Salvar o modelo treinado
-    save_trained_model(trained_model, model_type, store, item, models_dir=MODELS_DIR)
 
     # Retornar o DataFrame de previsões
     return forecast_df
@@ -114,8 +128,7 @@ def run_forecast_pipeline_for_top_items_per_store(query, forecast_table_full_id,
     if os.path.exists(METRICS_FILE_PATH):
         os.remove(METRICS_FILE_PATH)
     with open(METRICS_FILE_PATH, 'w') as f:
-        f.write("store,item,model_type,rmse,mae,mape,changepoint_prior_scale,seasonality_mode,"
-                "daily_seasonality,weekly_seasonality,yearly_seasonality,arima_order,arima_seasonal_order\n")
+        f.write("store,item,model_type,rmse,mae,mape,params\n")
 
     for store in stores:
         logging.info(f"\nProcessando loja {store}...")
@@ -159,7 +172,6 @@ def aggregate_and_save_forecasts(forecast_data):
         city_forecasts.to_csv(os.path.join(FORECASTS_DIR, "city_forecasts.csv"), index=False)
         logging.info(f"Previsões agregadas por cidade salvas em {os.path.join(FORECASTS_DIR, 'city_forecasts.csv')}")
 
-# Função principal
 def run_pipeline():
     setup_logging(LOG_FILE_PATH)
     logging.info("Iniciando o pipeline de previsão.")
