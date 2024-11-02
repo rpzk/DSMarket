@@ -1,6 +1,0 @@
-*.csv filter=lfs diff=lfs merge=lfs -text
-data/item_prices.csv filter=lfs diff=lfs merge=lfs -text
-data/item_sales.csv filter=lfs diff=lfs merge=lfs -text
-data/ds_market.csv.gz filter=lfs diff=lfs merge=lfs -text
-data/ds_market_with_prices.csv.gz filter=lfs diff=lfs merge=lfs -text
-data/ds_market_with_prices_1.csv.gz filter=lfs diff=lfs merge=lfs -text
