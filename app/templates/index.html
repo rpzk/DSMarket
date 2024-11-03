@@ -1,107 +1,204 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <title>Teste de Previsão</title>
-</head>
-<body>
-    <h1>Enviar Previsão de Vendas</h1>
-    <form id="forecastForm">
-        <label for="store">Loja:</label>
-        <input type="text" id="store" name="store" required>
-        <br><br>
-        
-        <label for="item">Item:</label>
-        <input type="text" id="item" name="item" required>
-        <br><br>
+# app/api.py
 
-        <button type="button" onclick="fetchLastDate()">Obter Última Data Disponível</button>
-        <p id="lastDateInfo"></p>
-        <br><br>
-        
-        <label for="periods">Períodos:</label>
-        <input type="number" id="periods" name="periods" value="28" required>
-        <br><br>
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+import pandas as pd
+import joblib
+import os
+from prophet import Prophet
+from statsmodels.tsa.statespace.sarimax import SARIMAXResults
+import logging
+from datetime import date, timedelta
+from typing import Optional
 
-        <!-- Campo de Data Inicial opcional -->
-        <label for="start_date">Data Inicial (opcional):</label>
-        <input type="date" id="start_date" name="start_date">
-        <br><br>
-        
-        <button type="button" onclick="sendData()">Enviar</button>
-    </form>
+# Instanciar a aplicação FastAPI
+app = FastAPI()
 
-    <!-- Div para exibir os resultados -->
-    <div id="result"></div>
+# Configuração de templates e CORS
+templates = Jinja2Templates(directory="app/templates")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permite todas as origens. Para produção, especifique os domínios permitidos.
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    <script>
-        function fetchLastDate() {
-            const store = document.getElementById("store").value;
-            const item = document.getElementById("item").value;
+# Configuração do logging
+logging.basicConfig(level=logging.INFO)
 
-            if (!store || !item) {
-                alert("Por favor, preencha os campos Loja e Item antes de obter a última data.");
-                return;
-            }
+# Caminho do diretório de modelos
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+models_dir = os.path.join(base_dir, 'forecasting/models')
 
-            fetch(`http://127.0.0.1:8000/last_date/?store=${encodeURIComponent(store)}&item=${encodeURIComponent(item)}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error("Modelo não encontrado para a loja e item especificados.");
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    console.log("Última data disponível:", data.last_date);
-                    document.getElementById("lastDateInfo").innerText = `Última data disponível: ${data.last_date}`;
-                })
-                .catch(error => {
-                    console.error("Erro:", error);
-                    document.getElementById("lastDateInfo").innerText = `Erro: ${error.message}`;
-                });
-        }
+# Função para extrair o nome principal da loja
+def extract_main_store_name(full_store_name: str) -> str:
+    """
+    Extrai o nome principal da loja removendo o sufixo 'SUPERMARKET X'.
+    Exemplo: 'Back Bay SUPERMARKET 3' -> 'Back Bay'
+    """
+    return full_store_name.replace("_", " ").split(" SUPERMARKET")[0].strip()
 
-        function sendData() {
-            const store = document.getElementById("store").value;
-            const item = document.getElementById("item").value;
-            const periods = parseInt(document.getElementById("periods").value);
-            const startDate = document.getElementById("start_date").value;
+# Função para extrair o código do item
+def extract_item_code(full_item: str) -> str:
+    """
+    Extrai o código do item removendo quaisquer prefixos.
+    Exemplo: 'SUPERMARKET_3_090' -> '090'
+    """
+    return full_item.split('_')[-1].strip()
 
-            const dataToSend = { store, item, periods };
+# Carregar todos os modelos Prophet e SARIMA na pasta 'forecasting/models'
+models = {}
+for model_file in os.listdir(models_dir):
+    if model_file.endswith('.pkl'):
+        model_path = os.path.join(models_dir, model_file)
 
-            if (startDate) {
-                dataToSend.start_date = startDate;
-            }
+        # Extrair tipo de modelo e detalhes de loja e item
+        model_type, _, store_item_key = model_file.partition('_model_')
+        store_full, item_full = store_item_key.replace('.pkl', '').rsplit('_', 1)
 
-            console.log("Enviando dados:", dataToSend);
-            document.getElementById("result").innerHTML = `<p>Processando, por favor aguarde...</p>`;
+        # Extrair apenas a parte principal do nome da loja
+        store_main = extract_main_store_name(store_full)
 
-            fetch("http://127.0.0.1:8000/forecast/", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(dataToSend)
-            })
-            .then(response => response.json())
-            .then(data => {
-                console.log(data);
-                if (data.error) {
-                    document.getElementById("result").innerHTML = `<p style="color: red;">Erro: ${data.error}</p>`;
-                } else {
-                    let forecastHtml = '<h2>Resultados da Previsão:</h2><table border="1"><tr><th>Data</th><th>Previsão de Vendas</th></tr>';
-                    data.forecast.forEach(item => {
-                        forecastHtml += `<tr><td>${item.date}</td><td>${item.forecast_sales.toFixed(2)}</td></tr>`;
-                    });
-                    forecastHtml += '</table>';
-                    document.getElementById("result").innerHTML = forecastHtml;
+        # Extrair o código do item
+        item_code = extract_item_code(item_full)
+
+        # Carregar conforme o tipo do modelo
+        try:
+            if model_type.lower() == 'sarima':
+                models[(store_main, item_code)] = SARIMAXResults.load(model_path)
+            else:
+                models[(store_main, item_code)] = joblib.load(model_path)
+            logging.info(f"Modelo carregado: Tipo={model_type}, Loja={store_main}, Item={item_code}")
+        except Exception as e:
+            logging.error(f"Erro ao carregar o modelo {model_file}: {e}")
+
+logging.info(f"Modelos carregados: {list(models.keys())}")
+
+# Definir o esquema de entrada para previsão
+class ForecastRequest(BaseModel):
+    store: str
+    item: str
+    periods: int = 28  # Horizonte de previsão
+    start_date: Optional[date] = None  # Data inicial da previsão (opcional)
+
+# Rota principal
+@app.get("/")
+def read_root(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+# Rota para obter a última data do modelo
+@app.get("/last_date/")
+def get_last_date(store: str, item: str):
+    # Extrair o nome principal da loja
+    store_main = extract_main_store_name(store)
+
+    # Extrair o código do item
+    item_code = extract_item_code(item)
+
+    logging.debug(f"Store main: {store_main}, Item code: {item_code}")  # Adicionado para depuração
+
+    model_key = (store_main, item_code)
+    model = models.get(model_key)
+
+    if not model:
+        logging.error(f"Modelo não encontrado para a loja {store_main} e item {item_code}.")
+        raise HTTPException(status_code=404, detail="Modelo não encontrado para a loja e item especificados.")
+
+    # Determinar a última data baseada no tipo de modelo
+    if isinstance(model, Prophet):
+        last_date = model.history['ds'].max()
+    else:
+        # Para SARIMA, assumimos que há um atributo 'data' com uma lista de datas
+        # Isso pode variar dependendo de como o modelo SARIMA foi treinado
+        if hasattr(model, 'data') and hasattr(model.data, 'dates'):
+            last_date = model.data.dates[-1]
+        else:
+            logging.error(f"Modelo SARIMA para {model_key} não possui atributo 'data.dates'.")
+            raise HTTPException(status_code=500, detail="Modelo SARIMA inválido.")
+
+    logging.info(f"Última data para {model_key}: {last_date.strftime('%Y-%m-%d')}")
+    return {"last_date": last_date.strftime('%Y-%m-%d')}
+
+# Rota para gerar previsões
+@app.post("/forecast/")
+def get_forecast(forecast_request: ForecastRequest):
+    try:
+        # Ajuste do store e item para o formato correto
+        store_main = extract_main_store_name(forecast_request.store)
+        item_code = extract_item_code(forecast_request.item)
+        periods = forecast_request.periods
+        start_date = forecast_request.start_date
+
+        logging.info(f"Dados recebidos: Loja={store_main}, Item={item_code}, Períodos={periods}, Data Inicial={start_date}")
+
+        model_key = (store_main, item_code)
+        model = models.get(model_key)
+        if not model:
+            available_stores = sorted({k[0] for k in models.keys() if k[1] == item_code})
+            available_items = sorted({k[1] for k in models.keys() if k[0] == store_main})
+            logging.error(f"Modelo não encontrado para a loja {store_main} e item {item_code}.")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "Modelo não encontrado para a loja e item especificados.",
+                    "available_stores_for_item": available_stores,
+                    "available_items_for_store": available_items
                 }
-            })
-            .catch(error => {
-                console.error("Erro:", error);
-                document.getElementById("result").innerHTML = `<p style="color: red;">Erro: ${error}</p>`;
-            });
-        }
-    </script>
-</body>
-</html>
+            )
+
+        # Determinar a última data baseada no tipo de modelo
+        if isinstance(model, Prophet):
+            last_date = model.history['ds'].max()
+        else:
+            if hasattr(model, 'data') and hasattr(model.data, 'dates'):
+                last_date = model.data.dates[-1]
+            else:
+                logging.error(f"Modelo SARIMA para {model_key} não possui atributo 'data.dates'.")
+                raise HTTPException(status_code=500, detail="Modelo SARIMA inválido.")
+
+        # Ajustar data inicial de previsão
+        future_start = pd.to_datetime(start_date or (last_date + timedelta(days=1)))
+        if future_start <= last_date:
+            future_start = last_date + timedelta(days=1)
+            logging.warning("Data inicial fornecida é anterior ou igual à última data de treinamento. Usando o dia seguinte à última data.")
+
+        # Gerar previsões
+        if isinstance(model, Prophet):
+            future_dates = pd.date_range(start=future_start, periods=periods, freq='D')
+            future = pd.DataFrame({'ds': future_dates})
+
+            # Adicionar os regressors 'is_christmas', 'is_holiday', 'day_of_week' e 'is_weekend' ao DataFrame
+            future['is_christmas'] = future['ds'].apply(lambda x: 1 if x.month == 12 and x.day == 25 else 0)
+            future['is_holiday'] = future['ds'].apply(
+                lambda x: 1 if (x.month == 12 and x.day == 25) or (x.month == 1 and x.day == 1) else 0
+            )
+            future['day_of_week'] = future['ds'].apply(lambda x: x.weekday())  # 0=Monday, 6=Sunday
+            future['is_weekend'] = future['ds'].apply(lambda x: 1 if x.weekday() >= 5 else 0)  # 1 for Saturday and Sunday, 0 otherwise
+
+            forecast = model.predict(future)
+            forecast_values = forecast['yhat'].values
+        else:
+            # Para SARIMA
+            forecast_values = model.forecast(steps=periods)
+
+        # Organizar o resultado
+        dates = pd.date_range(start=future_start, periods=periods, freq='D')
+        forecast_df = pd.DataFrame({
+            'date': dates.strftime('%Y-%m-%d'),
+            'store': store_main,
+            'item': item_code,
+            'forecast_sales': forecast_values
+        })
+
+        logging.info(f"Previsão gerada para {model_key}: {forecast_df.head().to_dict(orient='records')}")
+
+        return {"forecast": forecast_df.to_dict(orient='records')}
+
+    except HTTPException as http_exc:
+        raise http_exc  # Re-raise HTTPExceptions para serem tratadas pelo FastAPI
+    except Exception as e:
+        logging.error(f"Erro ao gerar a previsão: {e}")
+        raise HTTPException(status_code=500, detail=f"Ocorreu um erro ao gerar a previsão: {str(e)}")
