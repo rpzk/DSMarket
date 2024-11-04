@@ -1,3 +1,24 @@
+"""
+This module defines a FastAPI application for forecasting sales data using pre-trained models.
+The application includes the following endpoints:
+- GET /: Renders the index.html template.
+- GET /last_data_date/: Returns the last date of available data.
+- POST /forecast/: Generates a sales forecast for a specified store and item.
+Classes:
+    ForecastRequest(BaseModel): A Pydantic model representing the forecast request payload.
+Functions:
+    load_model(store: str, item: str, model_type: str) -> Any:
+        Loads a pre-trained model for the specified store, item, and model type.
+    read_root(request: Request) -> TemplateResponse:
+        Renders the index.html template.
+    get_last_data_date() -> dict:
+        Returns the last date of available data.
+    get_forecast(forecast_request: ForecastRequest) -> dict:
+        Generates a sales forecast for a specified store and item.
+Usage:
+    To run the application, use the following command:
+    uvicorn app.api:app --reload
+"""
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
