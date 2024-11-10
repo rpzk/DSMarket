@@ -126,8 +126,11 @@ def fit_and_forecast_sarima_optimized(train_data, test_data, steps):
             stepwise=True
         )
         sarima_model.fit(train_data['sales'], exogenous=exog_train)
+        
+        # Gerar previsões
         forecast_values = sarima_model.predict(n_periods=steps, exogenous=exog_test)
         forecast_values = [max(0, val) for val in forecast_values]  # Corrige valores negativos para zero
+        
         model_type = "sarima"
         params = {
             "order": sarima_model.order,

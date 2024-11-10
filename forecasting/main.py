@@ -94,8 +94,9 @@ def process_store_item_forecast(store, item, store_data, test_period_days):
 
     # Selecionar o melhor modelo baseado no MAPE
     best_forecast, best_model_type, best_metrics, best_params = min(forecast_results, key=lambda x: x[2]['mape'])
-    save_metrics(store, item, best_model_type, best_metrics['rmse'], best_metrics['mae'], best_metrics['mape'], 
-                 params=best_params, metrics_file_path=METRICS_FILE_PATH)
+    save_metrics(store, item, best_model_type, best_metrics['rmse'], best_metrics['mse'], best_metrics['mae'], 
+             best_metrics['mape'], best_metrics['r2'], best_metrics['smape'], best_metrics['mase'], 
+             params=best_params, metrics_file_path=METRICS_FILE_PATH)
 
     # Salvar o gráfico de previsão do melhor modelo
     forecast_df = pd.DataFrame({
@@ -127,8 +128,10 @@ def run_forecast_pipeline_for_top_items_per_store(query, forecast_table_full_id,
     # Limpar o arquivo de métricas antes de iniciar
     if os.path.exists(METRICS_FILE_PATH):
         os.remove(METRICS_FILE_PATH)
+    # No cabeçalho do CSV
     with open(METRICS_FILE_PATH, 'w') as f:
-        f.write("store,item,model_type,rmse,mae,mape,params\n")
+        f.write("store,item,model_type,rmse,mse,mae,mape,r2,smape,mase,changepoint_prior_scale,seasonality_mode,order,seasonal_order\n")
+
 
     for store in stores:
         logging.info(f"\nProcessando loja {store}...")
@@ -181,7 +184,7 @@ def run_pipeline():
     SELECT store, item, date, sales 
     FROM `perseverance-332400.TFM.ds_market`
     """
-    top_n = 5  # Defina o número de top itens que deseja processar por loja
+    top_n = 10  # Defina o número de top itens que deseja processar por loja
     run_forecast_pipeline_for_top_items_per_store(query, FORECAST_TABLE_FULL_ID, test_period_days=28, top_n=top_n)
 
 if __name__ == "__main__":
