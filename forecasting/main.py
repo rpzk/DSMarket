@@ -17,7 +17,7 @@ import pandas as pd
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Configurações do BigQuery
-SERVICE_ACCOUNT_PATH = 'tfm-sa.json'  # Atualize com o caminho correto para o seu arquivo de credenciais
+SERVICE_ACCOUNT_PATH = '../tfm-sa.json'  # Atualize com o caminho correto para o seu arquivo de credenciais
 PROJECT_ID = 'perseverance-332400'    # Atualize com o seu ID de projeto
 DATASET_ID = 'TFM'
 DATA_TABLE_ID = 'ds_market'

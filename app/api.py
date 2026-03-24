@@ -28,7 +28,6 @@ import pandas as pd
 import joblib
 import os
 from datetime import timedelta
-from typing import Optional
 
 app = FastAPI()
 
@@ -100,14 +99,14 @@ async def get_forecast(forecast_request: ForecastRequest):
             # Fazer a previsão
             forecast = model.predict(future_dates)
             forecast_values = forecast['yhat'].tolist()
-        
+            forecast_values = [max(0, value) for value in forecast['yhat'].tolist()]
         except FileNotFoundError:
             # Tenta carregar o modelo XGBoost se Prophet não for encontrado
             model_type = "xgboost"
             model = load_model(store, item, model_type)
             future_data = pd.DataFrame({"day_of_week": [(last_date + timedelta(days=i)).weekday() for i in range(1, steps + 1)]})
             forecast_values = model.predict(future_data).tolist()
-        
+            forecast_values = [max(0, value) for value in model.predict(future_data).tolist()]
         return {"store": store, "item": item, "model_type": model_type, "forecast": forecast_values}
     
     except FileNotFoundError as e:
